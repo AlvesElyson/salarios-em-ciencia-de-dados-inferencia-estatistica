@@ -15,8 +15,8 @@ Variável de agrupamento (k >= 3 grupos independentes): experience_level
 
 Por que Kruskal-Wallis (e não ANOVA)?
     - Dados de salário costumam ser fortemente assimétricos (poucos salários
-      muito altos "puxam" a distribuição), violando a suposição de
-      normalidade exigida pela ANOVA.
+      muito altos "puxam" a distribuição). Por isso testamos a normalidade
+      (Shapiro-Wilk) para decidir entre ANOVA e Kruskal-Wallis.
     - Kruskal-Wallis é a alternativa não paramétrica à ANOVA de um fator,
       pois compara as distribuições (postos/ranks) de 3 ou mais grupos
       independentes sem exigir normalidade.
@@ -34,14 +34,11 @@ import scikit_posthocs as sp
 sns.set_theme(style="whitegrid")
 plt.rcParams["figure.dpi"] = 110
 
-# -----------------------------------------------------------------------------
-# 1. IMPORTAÇÃO DA BASE DE DADOS
-# -----------------------------------------------------------------------------
+# 1. IMPORTAÇÃO DA BASE DE DADOS -----------------------------------------------------------------------------
 df = pd.read_csv("ds_salaries.csv")
 
-print("=" * 80)
-print("1. IMPORTAÇÃO DA BASE DE DADOS")
-print("=" * 80)
+print()
+print("1. IMPORTAÇÃO DA BASE DE DADOS", "-" * 80)
 print(f"Dimensões do dataset: {df.shape[0]} linhas x {df.shape[1]} colunas")
 print(df.head(), "\n")
 
@@ -57,12 +54,8 @@ df["experience_level"] = pd.Categorical(
     df["experience_level"], categories=ordem_niveis, ordered=True
 )
 
-# -----------------------------------------------------------------------------
-# 2. ANÁLISE EXPLORATÓRIA DOS DADOS
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("2. ANÁLISE EXPLORATÓRIA")
-print("=" * 80)
+# 2. ANÁLISE EXPLORATÓRIA DOS DADOS -----------------------------------------------------------------------------
+print("2. ANÁLISE EXPLORATÓRIA", "-" * 80)
 
 print("Frequência de observações por grupo (n por nível de experiência):")
 print(df["experience_level"].value_counts().sort_index(), "\n")
@@ -76,20 +69,21 @@ resumo = (
 print("Tabela-resumo do salário (USD) por nível de experiência:")
 print(resumo, "\n")
 
-# --- Histograma -------------------------------------------------------------
+# Histograma GERAL do salário (visão da forma da distribuição -> assimetria).
+# Importante: aqui NÃO separamos por grupo (a comparação entre grupos já é
+# feita pelo boxplot, de forma muito mais legível). Os grupos têm tamanhos
+# bem diferentes (SE tem 2516 obs. e EX tem 114), então um histograma
+# empilhado por grupo fica poluído e os grupos pequenos somem visualmente.
 plt.figure(figsize=(8, 5))
-sns.histplot(
-    data=df, x="salary_in_usd", hue="experience_level",
-    multiple="stack", bins=40, palette="viridis"
-)
-plt.title("Histograma do salário em USD, por nível de experiência")
+sns.histplot(data=df, x="salary_in_usd", bins=40, color="#3b6e8f")
+plt.title("Histograma do salário em USD (todos os profissionais)")
 plt.xlabel("Salário anual (USD)")
 plt.ylabel("Frequência")
 plt.tight_layout()
 plt.savefig("01_histograma.png")
 plt.close()
 
-# --- Boxplot ------------------------------------------------------------
+# Boxplot por grupo: esta é a comparação entre os k grupos.
 plt.figure(figsize=(7, 5))
 sns.boxplot(
     data=df, x="experience_level", y="salary_in_usd",
@@ -102,7 +96,7 @@ plt.tight_layout()
 plt.savefig("02_boxplot.png")
 plt.close()
 
-# --- Gráfico adequado ao teste: distribuição dos POSTOS (ranks) -------------
+# Gráfico adequado ao teste: distribuição dos POSTOS (ranks)
 # O Kruskal-Wallis compara os postos (ranks) das observações entre os grupos,
 # por isso este gráfico mostra exatamente o que o teste avalia.
 df["posto_global"] = stats.rankdata(df["salary_in_usd"])
@@ -121,158 +115,165 @@ plt.close()
 
 print("Gráficos salvos: 01_histograma.png | 02_boxplot.png | 03_postos_rank.png\n")
 
-# -----------------------------------------------------------------------------
-# 3. VERIFICAÇÃO DOS PRESSUPOSTOS
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("3. VERIFICAÇÃO DOS PRESSUPOSTOS")
-print("=" * 80)
+# 3. VERIFICAÇÃO DOS PRESSUPOSTOS -----------------------------------------------------------------------------
+print("3. VERIFICAÇÃO DOS PRESSUPOSTOS", "-" * 80)
 print("""Pressupostos do teste de Kruskal-Wallis:
   (a) As amostras dos k grupos são independentes;
   (b) A variável resposta é, no mínimo, ordinal (aqui é quantitativa contínua);
-  (c) Sob H0, as distribuições dos grupos têm a mesma forma (apenas podem
-      diferir em locação/mediana) -> permite interpretar rejeição de H0 como
-      diferença de medianas. Quando as formas diferem muito, a conclusão deve
-      ser lida como "diferença estocástica/de distribuição" entre os grupos.
-Observação: o KW NÃO exige normalidade nem homogeneidade de variâncias - é
-exatamente por isso que ele é usado aqui no lugar da ANOVA.
+  (c) Sob H0, todos os grupos provêm da mesma distribuição populacional.
+O Kruskal-Wallis NÃO exige normalidade nem homogeneidade de variâncias - ele
+não tem isso como pressuposto. A normalidade é testada abaixo apenas para
+decidir se a ANOVA (paramétrica) seria apropriada.
 """)
 
-print("Teste de normalidade (Shapiro-Wilk) por grupo - apenas para JUSTIFICAR")
-print("a escolha do teste não paramétrico em vez da ANOVA:\n")
+print("Teste de Shapiro-Wilk por grupo, para verificar se a ANOVA seria apropriada:\n")
+algum_rejeitou_normalidade = False
 for g in ordem_niveis:
     amostra = df.loc[df["experience_level"] == g, "salary_in_usd"]
     # Shapiro-Wilk é sensível a amostras grandes; usamos amostra aleatória
     # de até 5000 obs. (limite do teste) apenas como referência.
     stat_sw, p_sw = stats.shapiro(amostra.sample(min(len(amostra), 5000),
                                                   random_state=42))
-    conclusao = "rejeita normalidade" if p_sw < 0.05 else "não rejeita normalidade"
+    normal = p_sw >= 0.05
+    algum_rejeitou_normalidade = algum_rejeitou_normalidade or not normal
+    conclusao = "compatível com normalidade" if normal else "rejeita normalidade"
     print(f"  {g}: n={len(amostra):4d} | W={stat_sw:.4f} | p-valor={p_sw:.4g} -> {conclusao}")
 
-print("\n=> Em pelo menos um grupo o pressuposto de normalidade é rejeitado,")
-print("   o que reforça a adequação do teste de Kruskal-Wallis (não paramétrico).\n")
-
-# -----------------------------------------------------------------------------
-# 4. FORMULAÇÃO DAS HIPÓTESES
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("4. HIPÓTESES (teste de Kruskal-Wallis - sempre bilateral/global)")
-print("=" * 80)
-print("""H0: as distribuições do salário são iguais em todos os níveis de
-    experiência (medianas iguais) -> EN = MI = SE = EX
-H1: pelo menos um nível de experiência apresenta distribuição de salário
-    estocasticamente diferente dos demais.
-Nível de significância adotado: alpha = 0,05
+print("""
+=> Foi realizado o teste de Shapiro-Wilk para verificar se a ANOVA seria
+   apropriada. Como a normalidade não foi observada em pelo menos um grupo,
+   optou-se pelo teste não paramétrico de Kruskal-Wallis.
 """)
 
-# -----------------------------------------------------------------------------
-# 5. EXEMPLO RESOLVIDO MANUALMENTE (cálculo passo a passo da estatística H)
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("5. CÁLCULO MANUAL DA ESTATÍSTICA H (passo a passo)")
-print("=" * 80)
+# 4. FORMULAÇÃO DAS HIPÓTESES -----------------------------------------------------------------------------
+print("4. HIPÓTESES (teste de Kruskal-Wallis - sempre bilateral/global)", "-" * 80)
+print("""H0: as distribuições do salário são iguais entre todos os níveis de
+    experiência (EN, MI, SE e EX vêm da mesma distribuição populacional).
+H1: pelo menos um nível de experiência apresenta distribuição de salário
+    estocasticamente diferente das demais.
+Nível de significância adotado: alpha = 0,05
 
-grupos = [df.loc[df["experience_level"] == g, "salary_in_usd"].values for g in ordem_niveis]
-n_total = sum(len(g) for g in grupos)
+Observação importante: o Kruskal-Wallis testa igualdade de DISTRIBUIÇÕES,
+não igualdade de medianas. A leitura "rejeitar H0 = medianas diferentes" só
+é estritamente válida quando os grupos têm distribuições de forma/dispersão
+semelhante, diferindo apenas em locação - por isso olhamos os boxplots (item
+2) para avaliar visualmente se essa suposição é razoável antes de falar em
+"diferença de mediana" na conclusão.
+""")
 
-# 5.1 Ranquear TODAS as observações juntas (postos médios em caso de empate)
-todos_valores = np.concatenate(grupos)
-postos = stats.rankdata(todos_valores)
+# 5. EXEMPLO RESOLVIDO MANUALMENTE -----------------------------------------------------------------------------
+# Este exemplo usa um conjunto de dados FICTÍCIO e pequeno, só para fins
+# didáticos (slide), já que não é viável acompanhar um cálculo manual com as
+# 3.755 observações da base real. A base real é tratada separadamente no
+# item 6, usando a função pronta do scipy.
+print("5. EXEMPLO RESOLVIDO MANUALMENTE (conjunto de dados fictício e pequeno)", "-" * 80)
+print("""Suponha 3 grupos fictícios com 4 observações cada (n = 12 no total),
+sem empates, apenas para ilustrar o passo a passo do cálculo de H:
 
-# 5.2 Separar os postos de volta por grupo e somar
+  Grupo EN: 45, 48, 50, 52
+  Grupo MI: 58, 60, 62, 65
+  Grupo SE: 75, 78, 80, 82
+""")
+
+grupos_didaticos = {
+    "EN": [45, 48, 50, 52],
+    "MI": [58, 60, 62, 65],
+    "SE": [75, 78, 80, 82],
+}
+
+valores_d = np.concatenate(list(grupos_didaticos.values()))
+postos_d = stats.rankdata(valores_d)
+
+print("Passo 1 - Ranquear TODOS os 12 valores juntos (do menor para o maior):")
 idx = 0
-R_j, n_j = [], []
-for g in grupos:
-    n_g = len(g)
-    R_j.append(postos[idx: idx + n_g].sum())
-    n_j.append(n_g)
+R_d, n_d = {}, {}
+for nome, vals in grupos_didaticos.items():
+    n_g = len(vals)
+    ranks_grupo = postos_d[idx: idx + n_g]
+    for v, r in zip(vals, ranks_grupo):
+        print(f"    valor = {v:3d}  ->  posto = {r:.0f}  (grupo {nome})")
+    R_d[nome] = ranks_grupo.sum()
+    n_d[nome] = n_g
     idx += n_g
 
-print("Soma dos postos (R_j) e tamanho (n_j) por grupo:")
-for nome, R, n in zip(ordem_niveis, R_j, n_j):
-    print(f"  Grupo {nome}: n_j = {n:5d} | R_j = {R:,.1f} | R_j/n_j = {R/n:.2f}")
+print("\nPasso 2 - Somar os postos (R_j) de cada grupo:")
+for nome in grupos_didaticos:
+    print(f"    Grupo {nome}: n_j = {n_d[nome]} | R_j = {R_d[nome]:.0f}")
 
-# 5.3 Fórmula manual de H (sem correção de empates)
-H_manual = (12 / (n_total * (n_total + 1))) * sum(
-    (R**2) / n for R, n in zip(R_j, n_j)
-) - 3 * (n_total + 1)
+n_total_d = len(valores_d)
+k_d = len(grupos_didaticos)
+gl_d = k_d - 1
 
-# 5.4 Fator de correção para empates (ties) - recomendado quando há muitos
-_, contagem_empates = np.unique(todos_valores, return_counts=True)
-fator_correcao = 1 - (np.sum(contagem_empates**3 - contagem_empates) /
-                       (n_total**3 - n_total))
-H_corrigido = H_manual / fator_correcao
-
-k = len(grupos)
-gl = k - 1  # graus de liberdade = k - 1
+H_d = (12 / (n_total_d * (n_total_d + 1))) * sum(
+    (R_d[g] ** 2) / n_d[g] for g in grupos_didaticos
+) - 3 * (n_total_d + 1)
 
 print(f"""
-Fórmula: H = [12 / (N(N+1))] * Σ(R_j² / n_j) - 3(N+1)
-  N (total de observações)        = {n_total}
-  k (número de grupos)            = {k}
-  Graus de liberdade (gl = k - 1) = {gl}
+Passo 3 - Aplicar a fórmula:
+    H = [12 / (N(N+1))] * Σ(R_j² / n_j) - 3(N+1)
+    N = {n_total_d}   k = {k_d}   gl = k - 1 = {gl_d}
 
-  H (sem correção de empates)     = {H_manual:.4f}
-  Fator de correção de empates    = {fator_correcao:.6f}
-  H (corrigido para empates)      = {H_corrigido:.4f}
+    H = [12 / ({n_total_d}x{n_total_d+1})] * ({R_d['EN']:.0f}²/{n_d['EN']} + {R_d['MI']:.0f}²/{n_d['MI']} + {R_d['SE']:.0f}²/{n_d['SE']})
+        - 3x({n_total_d}+1)
+    H = {H_d:.3f}
 """)
 
-# -----------------------------------------------------------------------------
-# 6. REGRA DE DECISÃO
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("6. REGRA DE DECISÃO")
-print("=" * 80)
+alpha_d = 0.05
+valor_critico_d = stats.chi2.ppf(1 - alpha_d, gl_d)
+p_valor_d = 1 - stats.chi2.cdf(H_d, gl_d)
+
+print(f"""Passo 4 - Regra de decisão (alpha = {alpha_d}):
+  (a) Valor crítico: Qui-Quadrado(gl={gl_d}; alpha={alpha_d}) = {valor_critico_d:.3f}
+      H ({H_d:.3f}) > valor crítico ({valor_critico_d:.3f})?
+      -> {"SIM, REJEITA H0" if H_d > valor_critico_d else "NÃO, NÃO REJEITA H0"}
+
+  (b) p-valor: p = {p_valor_d:.4f}
+      p-valor < alpha?  -> {"SIM, REJEITA H0" if p_valor_d < alpha_d else "NÃO, NÃO REJEITA H0"}
+
+  Conclusão do exemplo didático: como os três grupos fictícios foram criados
+  sem nenhuma sobreposição de valores, era esperado H grande e p-valor
+  pequeno -> rejeita-se H0 (grupos vêm de distribuições diferentes).
+""")
+
+# 6. APLICAÇÃO COMPUTACIONAL NA BASE REAL -----------------------------------------------------------------------------
+# Aqui usamos a função pronta diretamente sobre os 3.755 registros reais.
+print("6. APLICAÇÃO COMPUTACIONAL NA BASE REAL - scipy.stats.kruskal()", "-" * 80)
+grupos = [df.loc[df["experience_level"] == g, "salary_in_usd"].values for g in ordem_niveis]
+n_total = sum(len(g) for g in grupos)
+k = len(grupos)
+gl = k - 1
+
+H_scipy, p_scipy = stats.kruskal(*grupos)
 alpha = 0.05
 valor_critico = stats.chi2.ppf(1 - alpha, gl)
-p_valor_manual = 1 - stats.chi2.cdf(H_corrigido, gl)
 
-print(f"""(a) Método do valor crítico:
-    H estatístico (corrigido)         = {H_corrigido:.4f}
-    Valor crítico Qui-Quadrado(gl={gl}, alpha={alpha}) = {valor_critico:.4f}
-    Decisão: {"REJEITA H0" if H_corrigido > valor_critico else "NÃO REJEITA H0"}
-    (rejeita-se H0 se H_calculado > valor crítico)
-
-(b) Método do p-valor:
-    p-valor = {p_valor_manual:.6g}
-    Decisão: {"REJEITA H0" if p_valor_manual < alpha else "NÃO REJEITA H0"}
-    (rejeita-se H0 se p-valor < alpha)
-""")
-
-# -----------------------------------------------------------------------------
-# 7. APLICAÇÃO DO TESTE (verificação com a função pronta do scipy)
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("7. APLICAÇÃO COMPUTACIONAL - scipy.stats.kruskal()")
-print("=" * 80)
-H_scipy, p_scipy = stats.kruskal(*grupos)
+print(f"N total = {n_total} | k = {k} grupos | gl = {gl}")
 print(f"Estatística H (scipy) = {H_scipy:.4f}")
-print(f"p-valor   (scipy)     = {p_scipy:.6g}")
-print("(valores batem com o cálculo manual corrigido para empates acima)\n")
+print(f"p-valor   (scipy)     = {p_scipy:.6g}\n")
 
-# -----------------------------------------------------------------------------
-# 8. INTERPRETAÇÃO DOS RESULTADOS
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("8. INTERPRETAÇÃO")
-print("=" * 80)
+print("Regra de decisão (mesma lógica do exemplo manual, agora na base real):")
+print(f"  (a) Valor crítico Qui-Quadrado(gl={gl}, alpha={alpha}) = {valor_critico:.4f}")
+print(f"      Decisão: {'REJEITA H0' if H_scipy > valor_critico else 'NÃO REJEITA H0'}")
+print(f"  (b) p-valor = {p_scipy:.6g}")
+print(f"      Decisão: {'REJEITA H0' if p_scipy < alpha else 'NÃO REJEITA H0'}\n")
+
+# 7. INTERPRETAÇÃO DOS RESULTADOS  -----------------------------------------------------------------------------
+print("7. INTERPRETAÇÃO", "-" * 80)
 if p_scipy < alpha:
     print(f"""Como o p-valor ({p_scipy:.4g}) é menor que alpha (0,05), rejeitamos H0.
 Há evidência estatística de que pelo menos um nível de experiência possui
-distribuição de salário diferente dos demais. Isso é coerente com a tabela-
-resumo: as medianas crescem visivelmente de EN -> MI -> SE -> EX.
+distribuição de salário diferente dos demais. Os boxplots do item 2 mostram
+formas/dispersões razoavelmente parecidas entre os grupos, o que permite
+também ler o resultado como: as medianas de salário tendem a crescer de
+EN -> MI -> SE -> EX.
 """)
 else:
     print(f"""Como o p-valor ({p_scipy:.4g}) não é menor que alpha (0,05), não há
 evidência suficiente para rejeitar H0.
 """)
 
-# -----------------------------------------------------------------------------
-# 9. COMPARAÇÕES MÚLTIPLAS (POST-HOC) APÓS REJEIÇÃO DE H0
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("9. COMPARAÇÕES MÚLTIPLAS (TESTE DE DUNN, correção de Bonferroni)")
-print("=" * 80)
+# 8. COMPARAÇÕES MÚLTIPLAS (POST-HOC) APÓS REJEIÇÃO DE H0 -----------------------------------------------------------------------------
+print("8. COMPARAÇÕES MÚLTIPLAS (TESTE DE DUNN, correção de Bonferroni)", "-" * 80)
 posthoc = sp.posthoc_dunn(
     df, val_col="salary_in_usd", group_col="experience_level", p_adjust="bonferroni"
 )
@@ -290,12 +291,8 @@ plt.tight_layout()
 plt.savefig("04_posthoc_dunn_heatmap.png")
 plt.close()
 
-# -----------------------------------------------------------------------------
-# 10. TABELA-RESUMO FINAL DOS RESULTADOS
-# -----------------------------------------------------------------------------
-print("=" * 80)
-print("10. TABELA-RESUMO DOS RESULTADOS")
-print("=" * 80)
+# 9. TABELA-RESUMO FINAL DOS RESULTADOS -----------------------------------------------------------------------------
+print("9. TABELA-RESUMO DOS RESULTADOS (base real)", "-" * 80)
 tabela_final = pd.DataFrame({
     "Estatística": ["H (Kruskal-Wallis)", "Graus de liberdade", "p-valor",
                      "Valor crítico (alpha=0,05)", "Decisão"],
@@ -305,12 +302,9 @@ tabela_final = pd.DataFrame({
 print(tabela_final.to_string(index=False))
 tabela_final.to_csv("05_tabela_resumo_resultados.csv", index=False)
 
-# -----------------------------------------------------------------------------
-# 11. CONCLUSÃO
-# -----------------------------------------------------------------------------
-print("\n" + "=" * 80)
-print("11. CONCLUSÃO")
-print("=" * 80)
+# 10. CONCLUSÃO -----------------------------------------------------------------------------
+print()
+print("10. CONCLUSÃO", "-" * 80)
 print("""O teste de Kruskal-Wallis indicou diferença estatisticamente significativa
 na distribuição de salários (USD) entre os níveis de experiência dos
 profissionais de Ciência de Dados. O teste de Dunn (pós-hoc) permite
